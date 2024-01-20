@@ -91,7 +91,7 @@ run;
 proc logistic data=cat;
   strata set_number;
   class jointbinary / descending;
-  model cc(event='1') = jointbinary adx gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
+  model cc(event='1') = jointbinary adx chemo gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
 run;
 
 
@@ -100,7 +100,7 @@ run;
 proc logistic data=cat;
   strata set_number;
   class jointcat8 / descending;
-  model cc(event='1') = jointcat8 adx gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
+  model cc(event='1') = jointcat8 adx chemo gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
 run;
 
 
@@ -109,6 +109,6 @@ run;
 proc logistic data=cat;
   strata set_number;
   class jointcat10 / descending;
-  model cc(event='1') = jointcat10 adx gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
+  model cc(event='1') = jointcat10 adx chemo gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
 run;
 
