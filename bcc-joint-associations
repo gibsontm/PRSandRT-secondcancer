@@ -1,0 +1,114 @@
+proc import datafile='specify path' dbms=xlsx out=casecontrol replace;
+sheet='sheet name';
+run;
+
+proc contents data=casecontrol;
+run;
+
+*exclude all records with missing/unknown rt exposure;
+data nomissrt;
+  set casecontrol;
+  where rtmiss ne 1;
+run;
+
+*exclude all case-control sets of non-European ancestry;
+data ceu_only;
+  set nomissrt;
+  where case_ceu = 1;
+run;
+
+*create radiation dose categories and joint RT-PRS categories;
+data cat;
+  set ceu_only;
+  *rt dose categories;
+    if rtdose = 0 then rtcat = 0;
+     else if 0 < rtdose lt 1 then rtcat = 1;
+	 else if 1 le rtdose lt 10 then rtcat = 2;
+	 else if 10 le rtdose lt 20 then rtcat = 3;
+	 else if 20 le rtdose lt 30 then rtcat = 4;
+	 else if 30 le rtdose lt 40 then rtcat = 5;
+	 else if rtdose ge 40 then rtcat = 6;
+   if rtdose lt 1 then rt_ge_one = 0;
+     else if rtdose ge 1 then rt_ge_one = 1;
+   if rtdose lt 2 then rt_ge_two = 0;
+     else if rtdose ge 2 then rt_ge_two = 1;
+   if rtdose lt 10 then rt_ge_ten = 0;
+     else if rtdose ge 10 then rt_ge_ten = 1;
+
+* joint associations with binary PRS and binary RT;
+  if prs_bcc001_binary = 0 then do;
+    if rt_ge_one = 0 then jointbinary = 1;
+	  else if rt_ge_one = 1 then jointbinary = 2;
+  end;
+  if prs_bcc001_binary = 1 then do;
+    if rt_ge_one = 0 then jointbinary = 3;
+	  else if rt_ge_one = 1 then jointbinary = 4;
+  end;
+
+*joint association categories using 4 RT categories and binary PRS categorization;
+  if prs_bcc001_binary = 0 then do;
+	if rtcat = 0 then jointcat8 = 1;
+	  else if rtcat = 1 then jointcat8 = 1;
+	  else if rtcat = 2 then jointcat8 = 2;
+	  else if rtcat = 3 then jointcat8 = 3;
+	  else if rtcat ge 4 then jointcat8 = 4;
+  end;
+  if prs_bcc001_binary = 1 then do;
+	if rtcat = 0 then jointcat8 = 5;
+	  else if rtcat = 1 then jointcat8 = 5;
+	  else if rtcat = 2 then jointcat8 = 6;
+	  else if rtcat = 3 then jointcat8 = 7;
+	  else if rtcat ge 4 then jointcat8 = 8;
+ end;
+
+*joint categories with quintiles of PRS and RT split at 2 Gy (too few cases in reference group if split at 1 Gy;
+  if prs_bcc001_quintile = 0 then do; *lowest PRS-z quintile;
+	  if rt_ge_two = 0 then jointcat10 = 1;
+	  else if rt_ge_two = 1 then jointcat10 = 2;
+	end;
+  if prs_bcc001_quintile = 1 then do; *second PRS-z quintile;
+	  if rt_ge_two = 0 then jointcat10 = 3;
+	  else if rt_ge_two = 1 then jointcat10 = 4;
+	end;
+  if prs_bcc001_quintile = 2 then do; *third PRS-z quintile;
+	  if rt_ge_two = 0 then jointcat10 = 5;
+	  else if rt_ge_two = 1 then jointcat10 = 6;
+	end;
+  if prs_bcc001_quintile = 3 then do; *fourth PRS-z quintile;
+	  if rt_ge_two = 0 then jointcat10 = 7;
+	  else if rt_ge_two = 1 then jointcat10 = 8;
+	end;
+  if prs_bcc001_quintile = 4 then do; *highest PRS-z quintile;
+	  if rt_ge_two = 0 then jointcat10 = 9;
+	  else if rt_ge_two = 1 then jointcat10 = 10;
+	end;
+run;
+
+*****************************************************************************************;
+
+***** run model for joint associations with binary PRS and RT categories, with low PRS and low RT as reference;
+
+proc logistic data=cat;
+  strata set_number;
+  class jointbinary / descending;
+  model cc(event='1') = jointbinary adx gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
+run;
+
+
+***** run model for joint associations with binary PRS and more detailed RT categories, with low PRS and low RT as reference;
+
+proc logistic data=cat;
+  strata set_number;
+  class jointcat8 / descending;
+  model cc(event='1') = jointcat8 adx gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
+run;
+
+
+***** run model for joint associations with PRS quintiles and binary RT categories, with low PRS and low RT as reference;
+
+proc logistic data=cat;
+  strata set_number;
+  class jointcat10 / descending;
+  model cc(event='1') = jointcat10 adx gwas2022_pc1 gwas2022_pc2 gwas2022_pc3 gwas2022_pc4 gwas2022_pc5 gwas2022_pc6 gwas2022_pc7 gwas2022_pc8 gwas2022_pc9 gwas2022_pc10;
+run;
+
