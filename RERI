@@ -1,0 +1,15 @@
+library(haven)
+library(interactionR)
+library(survival)
+
+dat=read_sas("export.sas7bdat")
+mydata<-dat
+summary(mydata)
+
+fit.clogit<-clogit(CC ~ rtbinary10*prsmedian + ADX + CHEMO + GWAS2022_PC1 + GWAS2022_PC2 + GWAS2022_PC3 + GWAS2022_PC4 + GWAS2022_PC5 + GWAS2022_PC6 + GWAS2022_PC7 + GWAS2022_PC8 + GWAS2022_PC9 + GWAS2022_PC10 + strata(SET_NUMBER), data=mydata)
+summary(fit.clogit)
+
+out.interact<-interactionR(fit.clogit,exposure_names = c("rtbinary10","prsmedian"), ci.type="delta", ci.level=0.95, em=FALSE, recode=FALSE)
+print(out.interact)
+
+interactionR_table(out.interact)
