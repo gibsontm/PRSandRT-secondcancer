@@ -1,0 +1,434 @@
+/*****************************************************************************
+Acknowledgement: 
+SAS v9.4
+Author: Jeremy Miller, Information Management Services, Inc.
+This code was developed through support of the Intramural Research Program of the NIH, National Cancer Institute, DCEG
+
+DISCLAIMER: This software is provided “as-is” and any express or implied warranties, including, but not limited to, the implied warranties of 
+merchantability, fitness for a particular purpose, and noninfringement are disclaimed. In no event shall the National Cancer Institute 
+(the provider) the National Institutes of Health, The U.S. Government, or the individual developers be liable for any direct, indirect, 
+incidental, special, exemplary, or consequential damages (including, but not limited to, procurement of substitute goods or services; loss of 
+use, data, or profits; or business interruption) however caused and on any theory of liability, whether in contract, strict liability, or 
+tort (including negligence or otherwise) arising in any way out of the use of this software, even if advised of the possibility of such damage.
+
+***************************************************************************************************************************/
+
+
+/*****************************************************************************
+
+ STUDY NAME:  Childhood Cancer Survival Study GWAS
+ PROGRAM LOCATION: <pathname>/codeshare_rpt053.g22_lifetest_yaxis07.sas
+ SOFTWARE:  SAS v9.4 Unix
+ PROGRAMMER:  Jeremy Miller
+ REQUESTOR:  Todd Gibson
+
+ PROGRAM FUNCTION: Cumulative incidence models using PROC LIFETEST for all cohorts.   
+                   
+                   Outputs a PDF file with frequency tables, model results, and graphs, and an Excel file with all data results.
+ 
+***************************************************************************************************************************/
+
+******************************************************************************;
+*     SYSTEM OPTIONS                                                         *;
+******************************************************************************;
+
+options noovp validvarname=upcase nofmterr filelocks=none;
+
+
+******************************************************************************;
+*   INPUT FILES                                                              *;
+******************************************************************************;
+
+filename C_PHENO pipe 'cat <pathname>/phenotype_g22_ccss.v9x.gz | gunzip -c';
+   proc cimport data=c_pheno infile=C_PHENO;
+filename S_PHENO pipe 'cat <pathname>/phenotype_g22_sjl.v9x.gz | gunzip -c';
+   proc cimport data=s_pheno infile=S_PHENO;
+filename PRS pipe 'cat <pathname>/summary_g22_prs_20221109.v9x.gz | gunzip -c';
+   proc cimport data=prs infile=PRS;
+
+
+filename FMT1 '<pathname>/module_formats.txt';
+filename FMT2 '<pathname>/gwas2022_formats.txt';
+
+
+******************************************************************************;
+*   OUTPUT FILES                                                             *;
+******************************************************************************;
+
+filename PDFOUT '<pathname>/rpt053.g22_lifetest_yaxis07.pdf';
+filename XLSXOUT '<pathname>/rpt053.g22_lifetest_yaxis07.xlsx';
+
+
+******************************************************************************;
+*   TITLES                                                                   *;
+******************************************************************************;
+
+title 'Childhood Cancer Survival Study GWAS';
+title2 "Saved as: %sysfunc(getoption(sysin))";
+
+
+****************************************************************************;
+*  FORMATS                                                                 *;
+****************************************************************************;
+
+proc format; 
+%INCLUDE FMT1 FMT2;    
+   value EXCLF
+      0 = 'Eligible'
+      1 = 'Primary > 21'
+      2 = 'SN missing age'
+      3 = 'SN before primary'
+      4 = 'SN <= 21'
+      5 = 'No SN, fup <= 21'     
+      6 = 'RT dose missing'
+      7 = 'Wrong sex'
+      ;
+   value STRAT_ALLF
+      0 = 'RT < 1 Gy, PRS < median'
+      1 = 'RT < 1 Gy, PRS >= median'
+      10 = 'RT >= 1 Gy, PRS < median'
+      11 = 'RT >= 1 Gy, PRS >= median'
+      20 = 'RT < 10 Gy, PRS < median'
+      21 = 'RT < 10 Gy, PRS >= median'
+      30 = 'RT >= 10 Gy, PRS < median'
+      31 = 'RT >= 10 Gy, PRS >= median'
+      ;
+   value STRAT_RTLE30F                
+      20 = 'RT < 10 Gy, PRS < median'
+      21 = 'RT < 10 Gy, PRS >= median'
+      30 = 'RT 10-29 Gy, PRS < median'
+      31 = 'RT 10-29 Gy, PRS >= median'
+      999 = 'RT >= 30'
+      ;
+   value STRAT_RTF
+      0 = 'RT < 1 Gy'
+      1 = 'RT >= 1 Gy'
+      2 = 'RT < 10 Gy'
+      3 = 'RT >= 10 Gy'
+      ;
+   value STRAT_PRSF
+      0 = 'PRS < median'
+      1 = 'PRS >= median'
+      ;
+run;
+
+
+
+****************************************************************************;
+*  MODIFY TEMPLATES FOR GRAPHS                                             *;
+****************************************************************************;
+
+ods path work.mystore(update) SASHELP.TMPLMST(READ);
+
+proc template;
+define statgraph Stat.Lifetest.Graphics.cifPlot;
+   notes "define cifPlot template";
+   dynamic nCurves groupVar groupNum groupName plotTest pValue plotCL Confidence Transparency maxTime xName _byline_ _bytitle_ _byfootnote;
+   BeginGraph;
+      if (NCURVES=1)
+         entrytitle "Cumulative Incidence Function";
+      else
+         entrytitle "Cumulative Incidence Functions";
+      endif;
+      if (PLOTCL)
+         entrytitle "With " CONFIDENCE " Confidence Limits" / textattrs=GRAPHVALUETEXT;
+      endif;
+      layout overlay / 
+         xaxisopts=(label="Age (years)" linearopts=(viewmin=21 viewmax=MAXTIME tickvaluelist=(30 40 50 60))) 
+         yaxisopts=(label="Cumulative Incidence" shortlabel="CIF" linearopts=(viewmin=0 viewmax=0.7 tickvaluelist=(0 .1 .2 .3 .4 .5 .6 .7)));
+         if (PLOTCL=1)
+            Bandplot LimitUpper=CIF_UCL LimitLower=CIF_LCL x=TIME / displayTail=false group=GROUPVAR index=GROUPNUM dataTransparency=Transparency
+               modelname="CIF" name="CL";
+         endif;
+         stepplot y=CIF x=TIME / group=GROUPVAR index=GROUPNUM name="CIF" legendlabel="CIF";
+         if (NCURVES > 1)
+            discretelegend "CIF" / location=outside;
+         endif;
+      endlayout;
+      if (_BYTITLE_)
+         entrytitle _BYLINE_ / textattrs=GRAPHVALUETEXT;
+      else
+         if (_BYFOOTNOTE_)
+            entryfootnote halign=left _BYLINE_;
+         endif;
+      endif;
+   EndGraph;
+end; 
+run;
+
+ods path show;
+proc template;
+   list /store=work.mystore;
+run;
+
+
+
+****************************************************************************;
+*  PROGRAM                                                                 *;
+****************************************************************************;
+
+data pheno;
+   set c_pheno (in=in1 where=(gwas2022_pop_ceu=1))
+       s_pheno (in=in2 where=(gwas2022_pop_ceu=1))
+       ;
+run;       
+
+proc sort data=pheno;
+   by gwas2022_seq;
+proc sort data=prs;
+   by gwas2022_seq;
+   
+
+** Prep data.  Patients start at age 21 and continue to event of interest if any or INC_FUP_AGE if none.  Patients with **;
+** primary cancer after age 21 or follow-up before age 21 are excluded. **;
+
+data elig allrec;
+   merge pheno (in=in1)
+         prs (in=in2)
+         ;
+   by gwas2022_seq;
+   if in1;
+   if ^in2 then abort;
+
+   array snever(6) bcc1_ever breast1_ever colorectal1_ever melanoma1_ever scc1_ever thyroid1_ever;
+   array snage(6) bcc1_age breast1_age colorectal1_age melanoma1_age scc1_age thyroid1_age;    
+   array rtcat(6) rt_cat_skin rt_cat_breast rt_cat_colorectal rt_cat_skin rt_cat_skin rt_cat_thyroid;
+   array prsmed(6) prs_bcc001_binary prs_breast001_binary prs_colorectal001_binary prs_melanoma001_binary prs_scc001_binary prs_thyroid001_binary;
+
+   select (wave);
+      when (0,1) study = 1;
+      when (3) study = 3;
+      otherwise abort;
+   end;   
+   
+   ** Define radiation values of interest (needed for exclusion) **;
+   ** 0=<1 Gy, 1=>=1 Gy, 2=<10 Gy, 3=>=10 Gy, .U=Unknown **;
+   if any_rt5 = 0 then do;
+      rt_cat_skin = 0;
+      rt_cat_colorectal = 0;
+      rt_cat_breast = 2;
+      rt_cat_thyroid = 2;
+   end;
+   else if any_rt5 = 1 then do;
+      ** For skin we use the max of all doses divided by 2 - the list of available fields differs by study **;
+      if study = 1 then do;
+         if nmiss(of rt_maxsegdose,rt_othhead,rt_neck,rt_chest,rt_abd,rt_pelvis,rt_arm,rt_leg) then rt_cat_skin = .U;
+         else if (max(of rt_maxsegdose,rt_othhead,rt_neck,rt_chest,rt_abd,rt_pelvis,rt_arm,rt_leg) / 2) >= 1 then rt_cat_skin = 1;
+         else rt_cat_skin = 0;
+      end;
+      else if study = 3 then do;
+         if nmiss(of rt_brain,rt_neck,rt_chest,rt_abd,rt_pelvis) then rt_cat_skin = .U;
+         else if (max(of rt_brain,rt_neck,rt_chest,rt_abd,rt_pelvis) / 2) >= 1 then rt_cat_skin = 1;
+         else rt_cat_skin = 0;
+      end;
+      if nmiss(rt_abd,rt_pelvis) then rt_cat_colorectal = .U;
+      else if max(of rt_abd,rt_pelvis) >= 1 then rt_cat_colorectal = 1;
+      else rt_cat_colorectal = 0;
+      if nmiss(rt_chest) then rt_cat_breast = .U;
+      else if rt_chest >= 10 then rt_cat_breast = 3;
+      else rt_cat_breast = 2;
+      if nmiss(rt_neck) then rt_cat_thyroid = .U;
+      else if rt_neck >= 10 then rt_cat_thyroid = 3;
+      else rt_cat_thyroid = 2;    
+   end;
+   else if any_rt5 = 2 then do;
+      rt_cat_skin = .U;
+      rt_cat_breast = .U;
+      rt_cat_colorectal = .U;
+      rt_cat_thyroid = .U;
+   end;                  
+   else abort;
+   ** Add flag for thyroid dose **;
+   flag_rt_thyroid_ge30 = (rt_neck >= 30);
+   
+      
+   ** Process separately for each outcome **;
+   do outcome = 1 to 6;
+      
+      ** Eligibility **;   
+      if primcanc_age > 21 then excl = 1;
+      else if snever(outcome) = 1 & missing(snage(outcome)) then excl = 2;
+      else if snever(outcome) = 1 & snage(outcome) <= primcanc_age then excl = 3;
+      else if snever(outcome) = 1 & round(snage(outcome),0.1) <= 21 then excl = 4;
+      else if snever(outcome) ^= 1 & round(inc_fup_age,0.1) <= 21 then excl = 5;         
+      else if rtcat(outcome) = .U then excl = 6;
+      else if outcome = 2 & sex ^= 2 then excl = 7;      
+      else excl = 0;    
+      
+      ** Output to master list for checking exclusion status **;
+      output allrec;         
+         
+      ** Analysis variables **;
+      if excl = 0 then do;   
+         ** Latency times are rounded to 0.1 since CCSS ages are to nearest 0.1 **;
+         ** Event of interest - set event=1 and time_to_exit=latency in years from primary to SN **;
+         if snever(outcome) = 1 then do;
+            event = 1;
+            time_to_exit = round(snage(outcome)-21,0.1);
+         end;
+         ** No event of interest - set event=0 (censored0 and time_to_exit=latency in years from primary to last incidence follow-up **;
+         else if snever(outcome) = 0 then do;
+            event = 0;
+            time_to_exit = round(inc_fup_age-21,0.1);
+         end;
+         else abort;  
+         
+         ** Stratification variables **;
+         ** PRS: 0=below median, 1=at or above median **;
+         strat_prs = prsmed(outcome);
+         ** RT: 0=<1 Gy, 1=>=1 Gy, 2=<10 Gy, 3=>=10 Gy (differs by outcome) **;
+         strat_rt = rtcat(outcome);
+         ** Combined **;
+         strat_all = strat_prs + 10 * strat_rt; 
+         ** Anthracycline **;
+         if ct_grp_anth_ever in (0,1,2) then strat_anth = ct_grp_anth_ever;
+         else abort;    
+         ** Special strat for thyroid outcome only for RT le 30 Gy **;
+         if outcome = 6 then do;
+            if flag_rt_thyroid_ge30 then strat_rtle30 = 999;
+            else strat_rtle30 = strat_all;
+         end;
+         
+         attained_age = time_to_exit + 21;
+         
+         ** Output to eligible list **;
+         output elig;
+      end;
+
+   end;
+
+   
+   label outcome = 'Outcome'
+         excl = 'Exclusion status'
+         event = 'Event status'
+         study = 'Study'
+         time_to_exit = 'Time from age 21 to exit'   
+         strat_prs = 'PRS category'
+         strat_rt = 'RT category'
+         strat_all = ' '  
+         strat_anth = 'Anthracycline category'
+         strat_rtle30 = 'RT category alternate'
+         attained_age = 'Age (years)'      
+         flag_rt_thyroid_ge30 = 'Thyroid RT dose >= 30 Gy'
+         ;
+   
+   format strat_all STRAT_ALLF.
+          strat_rt STRAT_RTF.
+          strat_prs STRAT_PRSF.  
+          strat_anth BOOLF.
+          strat_rtle30 STRAT_RTLE30F.
+          study STUDYF.
+          outcome OUTCOME_SET001F.                      
+          excl EXCLF. 
+          flag_: BOOLF.
+          ;
+
+run;      
+
+
+
+title4 'GWAS2022 CEU patients';  
+
+ods pdf file=PDFOUT;
+ods graphics on;
+ods listing close;
+
+proc freq data=allrec;
+   tables outcome * excl /missing norow nocol nopercent;
+   title6 'Exclusion status';
+run;         
+
+
+%MACRO CALL(OUTCOME=,TTL=);
+
+title5 "Outcome: &TTL";
+
+proc freq data=elig;    
+   where outcome = &OUTCOME;
+   tables strat_all * event /missprint norow nocol nopercent;
+   format event BOOLF.;
+   title6 'Frequency table of events by stratification';
+run;          
+
+proc lifetest data=elig (where=(outcome=&OUTCOME))
+              plots=cif(cl test) 
+              timelist=30 40 50 60 
+              outcif=cifout_overall_&OUTCOME
+              ;
+   time attained_age * event(0) / eventcode=1;
+   strata strat_all / order=internal;
+   title6 'Cumulative incidence results using STRATA=Combined';
+run;            
+
+%IF &OUTCOME = 6 %THEN %DO;
+
+proc freq data=elig;  
+   where outcome = &OUTCOME;
+   tables strat_rtle30 * event /missprint norow nocol nopercent;
+   format event BOOLF.;
+   title6 'Frequency table of events by stratification';
+run;          
+
+proc lifetest data=elig (where=(outcome=&OUTCOME & strat_rtle30 < 999))
+              plots=cif(cl test) 
+              timelist=30 40 50 60 
+              outcif=cifout_rtle30_&OUTCOME
+              ;
+   time attained_age * event(0) / eventcode=1;
+   strata strat_rtle30 / order=internal;   
+   title6 'Cumulative incidence results using STRATA=Combined';          
+   title7 'Restricted to RT doses <30 Gy';
+run;            
+
+%END; 
+
+%MEND CALL;
+
+
+%CALL(OUTCOME=1,TTL=BCC);
+%CALL(OUTCOME=2,TTL=Breast);
+%CALL(OUTCOME=3,TTL=Colorectal);
+%CALL(OUTCOME=4,TTL=Melanoma);
+%CALL(OUTCOME=5,TTL=SCC);
+%CALL(OUTCOME=6,TTL=Thyroid);
+
+
+data output;
+   set cifout_overall_1 (in=overall1)
+       cifout_overall_2 (in=overall2)
+       cifout_overall_3 (in=overall3)        
+       cifout_overall_4 (in=overall4)
+       cifout_overall_5 (in=overall5)
+       cifout_overall_6 (in=overall6)
+       cifout_rtle30_6 (in=rtle30_6)
+       ;
+   
+   if overall1 then outcome = 1;
+   else if overall2 then outcome = 2;
+   else if overall3 then outcome = 3;
+   else if overall4 then outcome = 4;
+   else if overall5 then outcome = 5;
+   else if overall6 | rtle30_6 then outcome = 6;
+   else abort;
+
+   label outcome = 'Outcome';
+   
+   format outcome OUTCOME_SET001F.;
+
+run;
+   
+
+ods pdf close;
+
+ods excel file=XLSXOUT options(flow='tables' frozen_headers='1' frozen_rowheaders='5');
+ods excel options(sheet_name='Full CI results');  
+options linesize=max nobyline;
+title;
+
+proc print data=output noobs;
+   var outcome strat_all strat_rtle30 attained_age atrisk event censored cif stderr cif_lcl cif_ucl;
+run;                             
+
+ods excel close;
+
+endsas;
