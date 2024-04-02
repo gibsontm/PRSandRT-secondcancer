@@ -1,0 +1,178 @@
+/*****************************************************************************
+Acknowledgement: 
+SAS v9.4
+Author: Jeremy Miller, Information Management Services, Inc.
+This code was developed through support of the Intramural Research Program of the NIH, National Cancer Institute, DCEG
+
+DISCLAIMER: This software is provided “as-is” and any express or implied warranties, including, but not limited to, the implied warranties of 
+merchantability, fitness for a particular purpose, and noninfringement are disclaimed. In no event shall the National Cancer Institute 
+(the provider) the National Institutes of Health, The U.S. Government, or the individual developers be liable for any direct, indirect, 
+incidental, special, exemplary, or consequential damages (including, but not limited to, procurement of substitute goods or services; loss of 
+use, data, or profits; or business interruption) however caused and on any theory of liability, whether in contract, strict liability, or 
+tort (including negligence or otherwise) arising in any way out of the use of this software, even if advised of the possibility of such damage.
+
+***************************************************************************************************************************/
+
+
+/*****************************************************************************
+
+ STUDY NAME:  Childhood Cancer Survival Study GWAS
+ PROGRAM LOCATION: <pathname>/rpt051.g22_set005_clr_nonceu.sas
+ SOFTWARE:  SAS v9.4 Unix
+ PROGRAMMER:  Jeremy Miller
+ REQUESTOR:  Todd Gibson
+
+ PROGRAM FUNCTION: Conditional logistic regression models for PRS (polygenic risk score) for all outcomes
+                   for set005 (all patients with minimal matching, allowing patients with SN to serve as controls). 
+                   The z-score is the non-CEU-only population z-score.
+                   
+                   This program produces the primary analyses limited to non-CEU patients. There is one set of tables for each
+                   of the six outcomes. Each set contains unadjusted and adjusted models for PRS Z-score, quintile, and decile
+                   (six models per outcome).
+                   
+                   Uses special PRS scored values scored on all non-cases of the given type.
+
+***************************************************************************************************************************/
+
+******************************************************************************;
+*     SYSTEM OPTIONS                                                         *;
+******************************************************************************;
+
+options nocenter noovp validvarname=upcase mprint varlenchk=nowarn linesize=148;
+
+******************************************************************************;
+*   INPUT FILES                                                              *;
+******************************************************************************;
+
+filename MATCH pipe 'cat <pathname>/match_g22_set005_combined.v9x.gz | gunzip -c';
+   proc cimport data=match infile=MATCH;
+filename PRS pipe 'cat <pathname>/summary_g22_prs_set005_nonceu_20230928.v9x.gz | gunzip -c';
+   proc cimport data=prs infile=PRS;
+
+filename FMT1 '<pathname>/module_formats.txt';
+filename FMT2 '<pathname>/gwas2022_formats.txt';
+
+
+******************************************************************************;
+*   OUTPUT FILES                                                             *;
+******************************************************************************;
+
+
+
+******************************************************************************;
+*   TITLES                                                                   *;
+******************************************************************************;
+
+title 'Childhood Cancer Survival Study GWAS';
+title2 "Saved as: %sysfunc(getoption(sysin))";
+
+
+****************************************************************************;
+*  FORMATS                                                                 *;
+****************************************************************************;
+
+proc format;
+%INCLUDE FMT1 FMT2;   
+   value POPF
+      0 = 'Overall'
+      ;
+   value RTMISSF
+      0 = 'Missing'
+      1-2 = 'Known'
+      ;
+run;
+
+
+****************************************************************************;
+*  MACROS                                                                  *;
+****************************************************************************;
+
+%MACRO X(OUTCOME=,T1=,POP=0,T2=Overall);    
+
+title6 "Outcome: &T1";   
+
+proc freq data=subset;
+   where outcome=&OUTCOME;; 
+   tables cc * prs_&T1._tertile /missing norow nopercent;
+   title8 "Crosstabs of case status by PRS tertile";
+run;   
+
+proc logistic data=subset;  
+   where outcome=&OUTCOME;; 
+   strata set_number /nosummary;  
+   model cc(event='Case') = prs_&T1._z /parmlabel;
+   title8 "Model 1: Analysis variable: Univariate z-PRS - unadjusted";
+run;
+
+proc logistic data=subset;  
+   where outcome=&OUTCOME;; 
+   strata set_number /nosummary;           
+   class rtmiss (ref="No") chemo (ref="No") diagnose (ref='Leukemia');
+   model cc(event='Case') = prs_&T1._z gwas2022_asn gwas2022_afr diagnose rtdose rtmiss chemo /parmlabel;
+   title8 "Model 2: Analysis variable: Univariate z-PRS - adjusted for ancestry, cancer diagnosis, RT dose, RT missing indicator, and chemo";
+run;   
+
+proc logistic data=subset;  
+   where outcome=&OUTCOME;; 
+   strata set_number /nosummary;   
+   class prs_&T1._tertile (ref="Tertile 1");
+   model cc(event='Case') = prs_&T1._tertile /parmlabel;
+   title8 "Model 3: Analysis variable: Tertiles z-PRS - unadjusted";
+run;
+
+proc logistic data=subset;  
+   where outcome=&OUTCOME;; 
+   strata set_number /nosummary;           
+   class rtmiss (ref="No") chemo (ref="No") diagnose (ref='Leukemia') prs_&T1._tertile (ref="Tertile 1");
+   model cc(event='Case') = prs_&T1._tertile gwas2022_asn gwas2022_afr diagnose rtdose rtmiss chemo /parmlabel;
+   title8 "Model 4: Analysis variable: Tertiles z-PRS - adjusted for ancestry, cancer diagnosis, RT dose, RT missing indicator, and chemo";
+run;   
+
+
+%MEND X;    
+
+
+****************************************************************************;
+*  PROGRAM                                                                 *;
+****************************************************************************;
+   
+proc sort data=match;
+   by gwas2022_seq;
+proc sort data=prs;
+   by gwas2022_seq;
+
+data subset (keep=study outcome set_number cc sex adx rtmiss rtdose chemo diagnose gwas2022: prs: rtmiss);
+   merge match (in=in1)
+         prs (in=in2)
+         ;
+   by gwas2022_seq;
+   if in1;   
+   
+   ** Restrict to CCSS/SJL if needed **;
+   if study in (1,3);
+   
+   ** Restrict to non-CEU patients for this program **;    
+   if ceu = 0;
+   
+   ** Formats for use with logistic regression **;
+   format outcome OUTCOME_SET001F.
+          study STUDYF.
+          cc CCF.
+          rtmiss BOOLF.
+          chemo BOOLF.
+          diagnose PRIMCANC_TYPE_GROUPF.  
+          prs_bcc001_tertile prs_breast002_tertile prs_colorectal001_tertile prs_melanoma001_tertile prs_scc001_tertile prs_thyroid001_tertile TERTILEF.
+          prs_bcc001_quintile prs_breast002_quintile prs_colorectal001_quintile prs_melanoma001_quintile prs_scc001_quintile prs_thyroid001_quintile QUINTILEF.
+          prs_bcc001_decile prs_breast002_decile prs_colorectal001_decile prs_melanoma001_decile prs_scc001_decile prs_thyroid001_decile DECILEF.
+          prs_bcc001_binary prs_breast002_binary prs_colorectal001_binary prs_melanoma001_binary prs_scc001_binary prs_thyroid001_binary BINARYF.
+          ;
+
+run;         
+
+
+title4 'Population: Matched case-control from set 005 (minimal allowing all non-cases as controls), limited to non-CEU patients, using special set005 Z-scores';   
+
+%X(OUTCOME=1,T1=BCC001);
+%X(OUTCOME=2,T1=BREAST002);  
+%X(OUTCOME=6,T1=THYROID001);
+
